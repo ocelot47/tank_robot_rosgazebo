@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+import math
+
+import rclpy
+from geometry_msgs.msg import PoseWithCovarianceStamped
+from rclpy.node import Node
+
+
+class InitialPosePublisher(Node):
+    def __init__(self):
+        super().__init__('set_initial_pose_once')
+
+        self.declare_parameter('x', 0.0)
+        self.declare_parameter('y', 0.0)
+        self.declare_parameter('yaw', 0.0)
+        self.declare_parameter('frame_id', 'map')
+        self.declare_parameter('repeat_count', 5)
+        self.declare_parameter('period_sec', 0.3)
+
+        self.x = float(self.get_parameter('x').value)
+        self.y = float(self.get_parameter('y').value)
+        self.yaw = float(self.get_parameter('yaw').value)
+        self.frame_id = str(self.get_parameter('frame_id').value)
+        self.repeat_count = int(self.get_parameter('repeat_count').value)
+        self.period_sec = float(self.get_parameter('period_sec').value)
+
+        self.publisher = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+        self.sent_count = 0
+
+        self.get_logger().info(
+            (
+                'Auto initial pose enabled: x=%.3f, y=%.3f, yaw=%.3f rad '
+                '(frame=%s, repeats=%d)'
+            )
+            % (self.x, self.y, self.yaw, self.frame_id, self.repeat_count)
+        )
+
+        self.timer = self.create_timer(self.period_sec, self._publish_once)
+
+    def _publish_once(self):
+        msg = PoseWithCovarianceStamped()
+        # Use zero time so AMCL transforms using latest TF available.
+        msg.header.stamp.sec = 0
+        msg.header.stamp.nanosec = 0
+        msg.header.frame_id = self.frame_id
+
+        msg.pose.pose.position.x = self.x
+        msg.pose.pose.position.y = self.y
+        msg.pose.pose.position.z = 0.0
+
+        half_yaw = 0.5 * self.yaw
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = math.sin(half_yaw)
+        msg.pose.pose.orientation.w = math.cos(half_yaw)
+
+        # Reasonable startup covariance for AMCL convergence.
+        msg.pose.covariance[0] = 0.25
+        msg.pose.covariance[7] = 0.25
+        msg.pose.covariance[35] = (math.pi / 12.0) ** 2
+
+        self.publisher.publish(msg)
+        self.sent_count += 1
+
+        if self.sent_count >= self.repeat_count:
+            self.get_logger().info('Initial pose published, shutting down helper node.')
+            self.timer.cancel()
+            if rclpy.ok():
+                rclpy.shutdown()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = InitialPosePublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

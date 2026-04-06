@@ -1,0 +1,12 @@
+<!--
+  Minimal NavigateThroughPoses tree for custom planner stack.
+  Avoids ClearEntireCostmap services from planner_server/global_costmap.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="NavigateThroughPosesSimple">
+      <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+      <FollowPath path="{path}" controller_id="FollowPath"/>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>

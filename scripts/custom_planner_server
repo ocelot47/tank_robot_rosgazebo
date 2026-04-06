@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""ROS2 custom global planner server using A*/Dijkstra from unit2_pp algorithms."""
+
+from __future__ import annotations
+
+import math
+import time
+from collections import deque
+from typing import Optional, Sequence, Set
+
+import rclpy
+from builtin_interfaces.msg import Duration as DurationMsg
+from geometry_msgs.msg import PoseStamped
+from nav2_msgs.action import ComputePathThroughPoses, ComputePathToPose
+from nav_msgs.msg import OccupancyGrid, Path
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.duration import Duration
+from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformException, TransformListener
+
+import tf2_geometry_msgs  # noqa: F401
+
+from custom_algorithms import a_star, dijkstra
+from custom_gridviz import GridViz
+
+
+class CustomPlannerServer(Node):
+    def __init__(self) -> None:
+        super().__init__('custom_planner_server')
+
+        self.declare_parameter('algorithm', 'astar')
+        self.declare_parameter('map_topic', '/map')
+        self.declare_parameter('global_frame', 'map')
+        self.declare_parameter('robot_base_frame', 'base_link')
+        self.declare_parameter('obstacle_threshold', 50)
+        self.declare_parameter('allow_unknown', False)
+        self.declare_parameter('allow_diagonal', True)
+        self.declare_parameter('cell_cost_weight', 2.0)
+        self.declare_parameter('nearest_free_max_radius', 8)
+        self.declare_parameter('visualize_search', True)
+
+        self.algorithm = str(self.get_parameter('algorithm').value).strip().lower()
+        self.map_topic = str(self.get_parameter('map_topic').value)
+        self.global_frame = str(self.get_parameter('global_frame').value)
+        self.robot_base_frame = str(self.get_parameter('robot_base_frame').value)
+        self.obstacle_threshold = int(self.get_parameter('obstacle_threshold').value)
+        self.allow_unknown = bool(self.get_parameter('allow_unknown').value)
+        self.allow_diagonal = bool(self.get_parameter('allow_diagonal').value)
+        self.cell_cost_weight = float(self.get_parameter('cell_cost_weight').value)
+        self.nearest_free_max_radius = int(self.get_parameter('nearest_free_max_radius').value)
+        self.visualize_search = bool(self.get_parameter('visualize_search').value)
+
+        self.map_msg: Optional[OccupancyGrid] = None
+        self.grid_viz: Optional[GridViz] = None
+
+        self.path_pub = self.create_publisher(Path, '/plan', 10)
+        map_qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.map_sub = self.create_subscription(
+            OccupancyGrid,
+            self.map_topic,
+            self._map_callback,
+            map_qos,
+        )
+
+        self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.compute_path_to_pose_server = ActionServer(
+            self,
+            ComputePathToPose,
+            'compute_path_to_pose',
+            execute_callback=self._execute_compute_path_to_pose,
+            goal_callback=self._goal_callback,
+            cancel_callback=self._cancel_callback,
+        )
+
+        self.compute_path_through_poses_server = ActionServer(
+            self,
+            ComputePathThroughPoses,
+            'compute_path_through_poses',
+            execute_callback=self._execute_compute_path_through_poses,
+            goal_callback=self._goal_callback,
+            cancel_callback=self._cancel_callback,
+        )
+
+        self.get_logger().info(
+            'Custom planner ready (algorithm=%s, map_topic=%s)'
+            % (self.algorithm, self.map_topic)
+        )
+
+    def _map_callback(self, msg: OccupancyGrid) -> None:
+        self.map_msg = msg
+        if self.grid_viz is None:
+            self.grid_viz = GridViz(
+                node=self,
+                frame_id=self.global_frame,
+                resolution=float(msg.info.resolution),
+                origin_x=float(msg.info.origin.position.x),
+                origin_y=float(msg.info.origin.position.y),
+                width=int(msg.info.width),
+            )
+            self.get_logger().info(
+                'Received map %dx%d @ %.3fm'
+                % (msg.info.width, msg.info.height, msg.info.resolution)
+            )
+
+    def _goal_callback(self, goal_request) -> GoalResponse:
+        if self.map_msg is None:
+            self.get_logger().warn('Rejecting goal: map not received yet')
+            return GoalResponse.REJECT
+
+        if hasattr(goal_request, 'goals') and len(goal_request.goals) == 0:
+            self.get_logger().warn('Rejecting goal: empty goals list')
+            return GoalResponse.REJECT
+
+        return GoalResponse.ACCEPT
+
+    def _cancel_callback(self, _goal_handle) -> CancelResponse:
+        return CancelResponse.ACCEPT
+
+    def _resolve_algorithm(self, planner_id: str) -> str:
+        if planner_id:
+            pid = planner_id.strip().lower()
+            if 'dijkstra' in pid:
+                return 'dijkstra'
+            if 'astar' in pid or pid == 'a*':
+                return 'astar'
+        if self.algorithm in ('dijkstra', 'astar'):
+            return self.algorithm
+        return 'astar'
+
+    def _execute_compute_path_to_pose(self, goal_handle):
+        request = goal_handle.request
+        result = ComputePathToPose.Result()
+
+        if self.map_msg is None:
+            self.get_logger().error('Map unavailable while planning')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        algorithm = self._resolve_algorithm(request.planner_id)
+        self.get_logger().info('Planning to single goal with %s' % algorithm)
+
+        start_pose_map = self._resolve_start_pose(request.use_start, request.start)
+        goal_pose_map = self._transform_pose_to_map(request.goal)
+        if start_pose_map is None or goal_pose_map is None:
+            self.get_logger().error('Failed to resolve start/goal in map frame')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        context = self._map_context_snapshot()
+        if context is None:
+            self.get_logger().error('Map unavailable while planning')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        width, height, resolution, origin_x, origin_y, costmap = context
+
+        start_idx = self._pose_to_free_index(start_pose_map, width, height, costmap)
+        goal_idx = self._pose_to_free_index(goal_pose_map, width, height, costmap)
+        if start_idx is None or goal_idx is None:
+            self.get_logger().error('No free start/goal cell found')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        t0 = time.monotonic()
+        path_indices, closed, frontier = self._run_graph_search(
+            algorithm,
+            start_idx,
+            goal_idx,
+            width,
+            height,
+            costmap,
+            resolution,
+        )
+        dt = time.monotonic() - t0
+
+        if not path_indices:
+            self.get_logger().warn('No valid path found')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            result.planning_time = self._duration_msg(dt)
+            return result
+
+        path_msg = self._indices_to_path(
+            path_indices,
+            width,
+            resolution,
+            origin_x,
+            origin_y,
+            start_pose_map,
+        )
+        self.path_pub.publish(path_msg)
+
+        if self.visualize_search and self.grid_viz is not None:
+            self.grid_viz.publish(
+                start_idx=start_idx,
+                goal_idx=goal_idx,
+                path_indices=path_indices,
+                closed_indices=closed,
+                frontier_indices=frontier,
+            )
+
+        self.get_logger().info(
+            '%s done: %d poses, explored=%d, frontier=%d, dt=%.3fs'
+            % (algorithm.upper(), len(path_msg.poses), len(closed), len(frontier), dt)
+        )
+
+        result.path = path_msg
+        result.planning_time = self._duration_msg(dt)
+        goal_handle.succeed()
+        return result
+
+    def _execute_compute_path_through_poses(self, goal_handle):
+        request = goal_handle.request
+        result = ComputePathThroughPoses.Result()
+
+        if self.map_msg is None:
+            self.get_logger().error('Map unavailable while planning')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        if not request.goals:
+            self.get_logger().error('No goals provided for compute_path_through_poses')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        algorithm = self._resolve_algorithm(request.planner_id)
+        self.get_logger().info(
+            'Planning through %d goals with %s' % (len(request.goals), algorithm)
+        )
+
+        start_pose_map = self._resolve_start_pose(request.use_start, request.start)
+        if start_pose_map is None:
+            self.get_logger().error('Failed to resolve start pose in map frame')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        context = self._map_context_snapshot()
+        if context is None:
+            self.get_logger().error('Map unavailable while planning')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            return result
+
+        width, height, resolution, origin_x, origin_y, costmap = context
+
+        combined_indices = []
+        closed_all: Set[int] = set()
+        frontier_all: Set[int] = set()
+        first_start_idx: Optional[int] = None
+        final_goal_idx: Optional[int] = None
+        current_start_pose = start_pose_map
+
+        t0 = time.monotonic()
+        for raw_goal_pose in request.goals:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result.path = self._empty_path()
+                result.planning_time = self._duration_msg(time.monotonic() - t0)
+                return result
+
+            goal_pose_map = self._transform_pose_to_map(raw_goal_pose)
+            if goal_pose_map is None:
+                self.get_logger().error('Failed to transform one of the waypoint goals')
+                goal_handle.abort()
+                result.path = self._empty_path()
+                result.planning_time = self._duration_msg(time.monotonic() - t0)
+                return result
+
+            start_idx = self._pose_to_free_index(current_start_pose, width, height, costmap)
+            goal_idx = self._pose_to_free_index(goal_pose_map, width, height, costmap)
+            if start_idx is None or goal_idx is None:
+                self.get_logger().error('No free start/goal cell found for a segment')
+                goal_handle.abort()
+                result.path = self._empty_path()
+                result.planning_time = self._duration_msg(time.monotonic() - t0)
+                return result
+
+            segment_path, segment_closed, segment_frontier = self._run_graph_search(
+                algorithm,
+                start_idx,
+                goal_idx,
+                width,
+                height,
+                costmap,
+                resolution,
+            )
+            if not segment_path:
+                self.get_logger().warn('No valid path found for one segment')
+                goal_handle.abort()
+                result.path = self._empty_path()
+                result.planning_time = self._duration_msg(time.monotonic() - t0)
+                return result
+
+            if first_start_idx is None:
+                first_start_idx = start_idx
+                combined_indices.extend(segment_path)
+            else:
+                combined_indices.extend(segment_path[1:])
+
+            closed_all.update(segment_closed)
+            frontier_all.update(segment_frontier)
+            final_goal_idx = goal_idx
+            current_start_pose = goal_pose_map
+
+        dt = time.monotonic() - t0
+
+        if not combined_indices:
+            self.get_logger().warn('Combined path is empty')
+            goal_handle.abort()
+            result.path = self._empty_path()
+            result.planning_time = self._duration_msg(dt)
+            return result
+
+        path_msg = self._indices_to_path(
+            combined_indices,
+            width,
+            resolution,
+            origin_x,
+            origin_y,
+            start_pose_map,
+        )
+        self.path_pub.publish(path_msg)
+
+        if (
+            self.visualize_search
+            and self.grid_viz is not None
+            and first_start_idx is not None
+            and final_goal_idx is not None
+        ):
+            self.grid_viz.publish(
+                start_idx=first_start_idx,
+                goal_idx=final_goal_idx,
+                path_indices=combined_indices,
+                closed_indices=closed_all,
+                frontier_indices=frontier_all,
+            )
+
+        self.get_logger().info(
+            '%s through-poses done: %d poses, explored=%d, frontier=%d, dt=%.3fs'
+            % (
+                algorithm.upper(),
+                len(path_msg.poses),
+                len(closed_all),
+                len(frontier_all),
+                dt,
+            )
+        )
+
+        result.path = path_msg
+        result.planning_time = self._duration_msg(dt)
+        goal_handle.succeed()
+        return result
+
+    def _resolve_start_pose(self, use_start: bool, start_pose: PoseStamped) -> Optional[PoseStamped]:
+        if use_start:
+            if not start_pose.header.frame_id:
+                self.get_logger().warn('use_start=True but start pose has no frame_id')
+                return None
+            return self._transform_pose_to_map(start_pose)
+        return self._get_robot_pose_in_map()
+
+    def _map_context_snapshot(self):
+        if self.map_msg is None:
+            return None
+        map_info = self.map_msg.info
+        return (
+            int(map_info.width),
+            int(map_info.height),
+            float(map_info.resolution),
+            float(map_info.origin.position.x),
+            float(map_info.origin.position.y),
+            list(self.map_msg.data),
+        )
+
+    def _run_graph_search(
+        self,
+        algorithm: str,
+        start_idx: int,
+        goal_idx: int,
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+        resolution: float,
+    ):
+        if algorithm == 'dijkstra':
+            return dijkstra(
+                start_idx,
+                goal_idx,
+                width,
+                height,
+                costmap,
+                resolution,
+                obstacle_threshold=self.obstacle_threshold,
+                allow_unknown=self.allow_unknown,
+                allow_diagonal=self.allow_diagonal,
+                cell_cost_weight=self.cell_cost_weight,
+            )
+
+        return a_star(
+            start_idx,
+            goal_idx,
+            width,
+            height,
+            costmap,
+            resolution,
+            obstacle_threshold=self.obstacle_threshold,
+            allow_unknown=self.allow_unknown,
+            allow_diagonal=self.allow_diagonal,
+            cell_cost_weight=self.cell_cost_weight,
+        )
+
+    def _pose_to_free_index(
+        self,
+        pose: PoseStamped,
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+    ) -> Optional[int]:
+        idx = self._world_to_index(pose.pose.position.x, pose.pose.position.y)
+        if idx is None:
+            return None
+        return self._nearest_free(idx, width, height, costmap)
+
+    def _indices_to_path(
+        self,
+        path_indices: Sequence[int],
+        width: int,
+        resolution: float,
+        origin_x: float,
+        origin_y: float,
+        start_pose_map: PoseStamped,
+    ) -> Path:
+        path_msg = Path()
+        path_msg.header.frame_id = self.global_frame
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+
+        xy_points = []
+        for idx in path_indices:
+            mx = idx % width
+            my = idx // width
+            wx = origin_x + (mx + 0.5) * resolution
+            wy = origin_y + (my + 0.5) * resolution
+            xy_points.append((wx, wy))
+
+        yaws = []
+        for i, (x, y) in enumerate(xy_points):
+            if len(xy_points) == 1:
+                yaw = self._yaw_from_quaternion(
+                    start_pose_map.pose.orientation.z,
+                    start_pose_map.pose.orientation.w,
+                )
+            elif i < len(xy_points) - 1:
+                nx, ny = xy_points[i + 1]
+                yaw = math.atan2(ny - y, nx - x)
+            else:
+                px, py = xy_points[i - 1]
+                yaw = math.atan2(y - py, x - px)
+            yaws.append(yaw)
+
+        now = self.get_clock().now().to_msg()
+        for (x, y), yaw in zip(xy_points, yaws):
+            pose = PoseStamped()
+            pose.header.frame_id = self.global_frame
+            pose.header.stamp = now
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.position.z = 0.0
+            pose.pose.orientation.z = math.sin(yaw * 0.5)
+            pose.pose.orientation.w = math.cos(yaw * 0.5)
+            path_msg.poses.append(pose)
+
+        return path_msg
+
+    def _empty_path(self) -> Path:
+        path = Path()
+        path.header.frame_id = self.global_frame
+        path.header.stamp = self.get_clock().now().to_msg()
+        return path
+
+    def _get_robot_pose_in_map(self) -> Optional[PoseStamped]:
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.global_frame,
+                self.robot_base_frame,
+                Time(),
+                timeout=Duration(seconds=0.5),
+            )
+        except TransformException as ex:
+            self.get_logger().warn('TF lookup failed for start pose: %s' % str(ex))
+            return None
+
+        pose = PoseStamped()
+        pose.header.frame_id = self.global_frame
+        pose.header.stamp = transform.header.stamp
+        pose.pose.position.x = transform.transform.translation.x
+        pose.pose.position.y = transform.transform.translation.y
+        pose.pose.position.z = transform.transform.translation.z
+        pose.pose.orientation = transform.transform.rotation
+        return pose
+
+    def _transform_pose_to_map(self, pose: PoseStamped) -> Optional[PoseStamped]:
+        if not pose.header.frame_id:
+            self.get_logger().warn('Pose without frame_id cannot be transformed')
+            return None
+        if pose.header.frame_id == self.global_frame:
+            return pose
+        try:
+            transformed = self.tf_buffer.transform(
+                pose,
+                self.global_frame,
+                timeout=Duration(seconds=0.5),
+            )
+            return transformed
+        except TransformException as ex:
+            self.get_logger().warn('Pose transform failed: %s' % str(ex))
+            return None
+
+    def _world_to_index(self, x: float, y: float) -> Optional[int]:
+        if self.map_msg is None:
+            return None
+        info = self.map_msg.info
+        mx = int((x - info.origin.position.x) / info.resolution)
+        my = int((y - info.origin.position.y) / info.resolution)
+        if mx < 0 or my < 0 or mx >= info.width or my >= info.height:
+            return None
+        return my * info.width + mx
+
+    def _is_free(self, index: int, costmap: Sequence[int]) -> bool:
+        occ = int(costmap[index])
+        if occ < 0:
+            return self.allow_unknown
+        return occ < self.obstacle_threshold
+
+    def _nearest_free(
+        self,
+        start_idx: int,
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+    ) -> Optional[int]:
+        if self._is_free(start_idx, costmap):
+            return start_idx
+
+        start_x = start_idx % width
+        start_y = start_idx // width
+        queue = deque([(start_x, start_y, 0)])
+        visited = {(start_x, start_y)}
+
+        while queue:
+            x, y, d = queue.popleft()
+            if d > self.nearest_free_max_radius:
+                continue
+
+            idx = y * width + x
+            if self._is_free(idx, costmap):
+                return idx
+
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx = x + dx
+                ny = y + dy
+                if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                    continue
+                key = (nx, ny)
+                if key in visited:
+                    continue
+                visited.add(key)
+                queue.append((nx, ny, d + 1))
+
+        return None
+
+    @staticmethod
+    def _yaw_from_quaternion(z: float, w: float) -> float:
+        return math.atan2(2.0 * w * z, 1.0 - 2.0 * z * z)
+
+    @staticmethod
+    def _duration_msg(seconds: float) -> DurationMsg:
+        total_ns = int(seconds * 1_000_000_000)
+        return DurationMsg(
+            sec=total_ns // 1_000_000_000,
+            nanosec=total_ns % 1_000_000_000,
+        )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CustomPlannerServer()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
