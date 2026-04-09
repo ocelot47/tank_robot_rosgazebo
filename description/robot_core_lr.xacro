@@ -11,6 +11,10 @@
 		<color rgba="0 0 0 1"/>
 	</material>
 
+	<material name="yellow">
+		<color rgba="1 1 0 1"/>
+	</material>
+
 	<!-- BASE LINK -->
 	<link name="base_link">
 		
@@ -46,6 +50,15 @@
 	</joint>
 
 	<link name="chassis_link">
+		<visual>
+			<!-- Scale/offset STL to match LR collision body (~0.8 x 0.4 x 0.05 at z=0.1) -->
+			<origin xyz="0.5248 0.1928 0.1595" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/chassis_link.STL" scale="6.154 4.0 12.5"/>
+			</geometry>
+			<material name="white"/>
+		</visual>
+		<!-- Primitive fallback so the body is still visible if mesh rendering fails -->
 		<visual>
 			<origin xyz="0 0 0.1"/>
 			<geometry>
@@ -144,6 +157,21 @@
 
 	<link name="wheel1_link">
 		<visual>
+			<origin xyz="0 0 0.0167" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/wheel1_Link.STL" scale="2.56 2.56 3.333"/>
+			</geometry>
+			<material name="yellow"/>
+		</visual>
+		<visual>
+			<origin xyz="0 0 -0.005" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/tire1_Link.STL" scale="2.04 2.04 3.333"/>
+			</geometry>
+			<material name="black"/>
+		</visual>
+		<!-- Primitive fallback so wheel remains visible if mesh loading fails -->
+		<visual>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
@@ -176,6 +204,21 @@
 	</joint>
 
 	<link name="wheel2_link">
+		<visual>
+			<origin xyz="0 0 0.0167" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/wheel2_Link.STL" scale="2.56 2.56 3.333"/>
+			</geometry>
+			<material name="yellow"/>
+		</visual>
+		<visual>
+			<origin xyz="0 0 -0.005" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/tire2_Link.STL" scale="2.04 2.04 3.333"/>
+			</geometry>
+			<material name="black"/>
+		</visual>
+		<!-- Primitive fallback so wheel remains visible if mesh loading fails -->
 		<visual>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
@@ -210,6 +253,21 @@
 
 	<link name="wheel3_link">
 		<visual>
+			<origin xyz="0 0 0.0167" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/wheel3_Link.STL" scale="2.56 2.56 3.333"/>
+			</geometry>
+			<material name="yellow"/>
+		</visual>
+		<visual>
+			<origin xyz="0 0 -0.005" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/tire3_Link.STL" scale="2.04 2.04 3.333"/>
+			</geometry>
+			<material name="black"/>
+		</visual>
+		<!-- Primitive fallback so wheel remains visible if mesh loading fails -->
+		<visual>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
@@ -242,6 +300,21 @@
 	</joint>
 
 	<link name="wheel4_link">
+		<visual>
+			<origin xyz="0 0 0.0167" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/wheel4_Link.STL" scale="2.56 2.56 3.333"/>
+			</geometry>
+			<material name="yellow"/>
+		</visual>
+		<visual>
+			<origin xyz="0 0 0.045" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="package://four_wheeled_robot/meshes/tire4_Link.STL" scale="2.04 2.04 3.333"/>
+			</geometry>
+			<material name="black"/>
+		</visual>
+		<!-- Primitive fallback so wheel remains visible if mesh loading fails -->
 		<visual>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>

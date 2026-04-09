@@ -39,6 +39,8 @@ class CustomPlannerServer(Node):
         self.declare_parameter('allow_diagonal', True)
         self.declare_parameter('cell_cost_weight', 2.0)
         self.declare_parameter('turn_penalty', 0.2)
+        self.declare_parameter('astar_heuristic_mode', 'auto')
+        self.declare_parameter('astar_heuristic_weight', 1.0)
         self.declare_parameter('nearest_free_max_radius', 8)
         self.declare_parameter('visualize_search', True)
         self.declare_parameter('visualize_progressive', True)
@@ -57,6 +59,12 @@ class CustomPlannerServer(Node):
         self.allow_diagonal = bool(self.get_parameter('allow_diagonal').value)
         self.cell_cost_weight = float(self.get_parameter('cell_cost_weight').value)
         self.turn_penalty = float(self.get_parameter('turn_penalty').value)
+        self.astar_heuristic_mode = str(
+            self.get_parameter('astar_heuristic_mode').value
+        ).strip().lower()
+        self.astar_heuristic_weight = max(
+            0.0, float(self.get_parameter('astar_heuristic_weight').value)
+        )
         self.nearest_free_max_radius = int(self.get_parameter('nearest_free_max_radius').value)
         self.visualize_search = bool(self.get_parameter('visualize_search').value)
         self.visualize_progressive = bool(
@@ -113,9 +121,11 @@ class CustomPlannerServer(Node):
         )
 
         self.get_logger().info(
-            'Custom planner ready (algorithm=%s, map_topic=%s, turn_penalty=%.2f, viz_step=%d, viz_delay_ms=%.0f)'
+            'Custom planner ready (algorithm=%s, heuristic=%s/%.2f, map_topic=%s, turn_penalty=%.2f, viz_step=%d, viz_delay_ms=%.0f)'
             % (
                 self.algorithm,
+                self.astar_heuristic_mode,
+                self.astar_heuristic_weight,
                 self.map_topic,
                 self.turn_penalty,
                 self.visualize_every_n_closed,
@@ -494,6 +504,8 @@ class CustomPlannerServer(Node):
             allow_diagonal=self.allow_diagonal,
             cell_cost_weight=self.cell_cost_weight,
             turn_penalty=self.turn_penalty,
+            heuristic_mode=self.astar_heuristic_mode,
+            heuristic_weight=self.astar_heuristic_weight,
             on_closed=on_closed,
             on_frontier=on_frontier,
         )

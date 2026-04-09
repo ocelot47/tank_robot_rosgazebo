@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import itertools
 import math
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -17,6 +18,37 @@ def _euclidean_distance(idx: int, goal_idx: int, width: int, resolution: float) 
     gx = goal_idx % width
     gy = goal_idx // width
     return math.hypot(ix - gx, iy - gy) * resolution
+
+
+def _heuristic_distance(
+    idx: int,
+    goal_idx: int,
+    width: int,
+    resolution: float,
+    allow_diagonal: bool,
+    mode: str,
+) -> float:
+    ix = idx % width
+    iy = idx // width
+    gx = goal_idx % width
+    gy = goal_idx // width
+    dx = abs(ix - gx)
+    dy = abs(iy - gy)
+
+    selected_mode = mode.strip().lower() if mode else 'auto'
+    if selected_mode == 'auto':
+        selected_mode = 'octile' if allow_diagonal else 'manhattan'
+
+    if selected_mode == 'manhattan':
+        return (dx + dy) * resolution
+    if selected_mode == 'octile':
+        d = resolution
+        d2 = resolution * math.sqrt(2.0)
+        return d * (dx + dy) + (d2 - 2.0 * d) * min(dx, dy)
+    if selected_mode == 'euclidean':
+        return math.hypot(dx, dy) * resolution
+
+    return math.hypot(dx, dy) * resolution
 
 
 def _reconstruct_path(
@@ -83,14 +115,15 @@ def dijkstra(
     on_frontier: NodeCallback = None,
 ) -> Tuple[List[int], Set[int], Set[int]]:
     """Compute shortest path using Dijkstra."""
-    open_heap: List[Tuple[float, int]] = [(0.0, start_index)]
+    push_order = itertools.count()
+    open_heap: List[Tuple[float, int, int]] = [(0.0, next(push_order), start_index)]
     g_costs: Dict[int, float] = {start_index: 0.0}
     parents: Dict[int, int] = {}
     closed: Set[int] = set()
     frontier: Set[int] = {start_index}
 
     while open_heap:
-        current_cost, current = heapq.heappop(open_heap)
+        current_cost, _, current = heapq.heappop(open_heap)
         if current in closed:
             continue
 
@@ -126,7 +159,7 @@ def dijkstra(
 
             parents[neighbor] = current
             g_costs[neighbor] = tentative
-            heapq.heappush(open_heap, (tentative, neighbor))
+            heapq.heappush(open_heap, (tentative, next(push_order), neighbor))
 
             if neighbor not in frontier:
                 frontier.add(neighbor)
@@ -148,21 +181,35 @@ def a_star(
     allow_diagonal: bool = True,
     cell_cost_weight: float = 2.0,
     turn_penalty: float = 0.0,
+    heuristic_mode: str = 'auto',
+    heuristic_weight: float = 1.0,
     on_closed: NodeCallback = None,
     on_frontier: NodeCallback = None,
 ) -> Tuple[List[int], Set[int], Set[int]]:
-    """Compute shortest path using A* (Euclidean heuristic)."""
-    start_h = _euclidean_distance(start_index, goal_index, width, resolution)
-    open_heap: List[Tuple[float, float, int]] = [(start_h, 0.0, start_index)]
+    """Compute shortest path using A* with configurable heuristic."""
+    push_order = itertools.count()
+    w = max(0.0, float(heuristic_weight))
+    start_h = _heuristic_distance(
+        start_index,
+        goal_index,
+        width,
+        resolution,
+        allow_diagonal,
+        heuristic_mode,
+    )
+    open_heap: List[Tuple[float, float, int, int]] = [
+        (w * start_h, start_h, next(push_order), start_index)
+    ]
     g_costs: Dict[int, float] = {start_index: 0.0}
     parents: Dict[int, int] = {}
     closed: Set[int] = set()
     frontier: Set[int] = {start_index}
 
     while open_heap:
-        _, current_g, current = heapq.heappop(open_heap)
+        _, _, _, current = heapq.heappop(open_heap)
         if current in closed:
             continue
+        current_g = g_costs[current]
 
         frontier.discard(current)
         closed.add(current)
@@ -196,8 +243,18 @@ def a_star(
 
             parents[neighbor] = current
             g_costs[neighbor] = tentative_g
-            h = _euclidean_distance(neighbor, goal_index, width, resolution)
-            heapq.heappush(open_heap, (tentative_g + h, tentative_g, neighbor))
+            h = _heuristic_distance(
+                neighbor,
+                goal_index,
+                width,
+                resolution,
+                allow_diagonal,
+                heuristic_mode,
+            )
+            heapq.heappush(
+                open_heap,
+                (tentative_g + w * h, h, next(push_order), neighbor),
+            )
 
             if neighbor not in frontier:
                 frontier.add(neighbor)

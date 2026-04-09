@@ -173,7 +173,18 @@ ros2 launch four_wheeled_robot nav2_navigation.launch.py \
   planner_algorithm:=dijkstra
 ```
 
-Default hiện tại: `astar` (xem `launch/nav2_navigation.launch.py`).
+Default launch hiện tại: `dijkstra` (xem `launch/nav2_navigation.launch.py`).
+
+Để quan sát mô phỏng đúng bản chất thuật toán:
+- Dijkstra: lan đều theo chi phí (wavefront).
+- A*: vẫn lan nhưng bị kéo theo hướng goal bởi heuristic.
+
+Khuyến nghị chỉnh trong `config/nav2_params.yaml`:
+- `visualize_progressive: true`
+- `visualize_every_n_closed: 1`
+- `visualize_step_delay_ms: 10.0` (hoặc `0.0` nếu muốn realtime)
+- `astar_heuristic_mode: auto` (`octile` nếu đi chéo, `manhattan` nếu chỉ 4 hướng)
+- `astar_heuristic_weight: 1.0` (A* chuẩn, tối ưu)
 
 ### 7.2. Initial pose
 
@@ -207,6 +218,9 @@ File: `config/nav2_params.yaml`
 - Goal tolerance:
   - `xy_goal_tolerance: 0.22`
   - `yaw_goal_tolerance: 0.45`
+- Heuristic A*:
+  - `astar_heuristic_mode: auto`
+  - `astar_heuristic_weight: 1.0`
 
 Nếu muốn chỉnh lại độ "nhạy" khi tới goal:
 - `controller_server.ros__parameters.general_goal_checker.*`
@@ -287,6 +301,9 @@ ros2 topic echo /tf --once
 ```
 
 ## 12) Build nhanh sau khi sửa code
+tắt hết tiến trình cũ
+pkill -9 -f 'ros2|gzserver|gzclient|rviz2|robot_state_publisher|spawn_entity.py' || true
+
 
 ```bash
 cd ~/tank_ws
@@ -294,4 +311,3 @@ source /opt/ros/humble/setup.bash
 colcon build --packages-select four_wheeled_robot --symlink-install
 source install/setup.bash
 ```
-

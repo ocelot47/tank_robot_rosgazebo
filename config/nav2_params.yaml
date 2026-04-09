@@ -359,11 +359,15 @@ custom_planner_server:
     allow_diagonal: true
     cell_cost_weight: 2.0
     turn_penalty: 0.20
+    astar_heuristic_mode: auto
+    astar_heuristic_weight: 1.0
     nearest_free_max_radius: 8
     visualize_search: true
     visualize_progressive: true
-    visualize_every_n_closed: 30
-    visualize_step_delay_ms: 60.0
+    #update thua hon, tang len de nhanh hon 
+    visualize_every_n_closed: 60
+    # toc do lan rong, giam de nhanh hon 
+    visualize_step_delay_ms: 30.0
     simplify_path: false
     line_of_sight_smoothing: false
     smoothing_clearance_cells: 2
