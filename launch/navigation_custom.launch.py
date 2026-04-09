@@ -13,6 +13,7 @@ from nav2_common.launch import RewrittenYaml
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('four_wheeled_robot')
+    to_pose_bt = os.path.join(pkg_share, 'config', 'navigate_to_pose_simple.xml')
     through_poses_bt = os.path.join(pkg_share, 'config', 'navigate_through_poses_simple.xml')
 
     namespace = LaunchConfiguration('namespace')
@@ -37,6 +38,7 @@ def generate_launch_description():
     param_substitutions = {
         'use_sim_time': use_sim_time,
         'autostart': autostart,
+        'default_nav_to_pose_bt_xml': to_pose_bt,
         'default_nav_through_poses_bt_xml': through_poses_bt,
     }
 

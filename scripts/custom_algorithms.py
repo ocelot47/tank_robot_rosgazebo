@@ -33,6 +33,40 @@ def _reconstruct_path(
     return path
 
 
+def _step_direction(from_idx: int, to_idx: int, width: int) -> Tuple[int, int]:
+    fx = from_idx % width
+    fy = from_idx // width
+    tx = to_idx % width
+    ty = to_idx // width
+    return (tx - fx, ty - fy)
+
+
+def _turn_penalty_cost(
+    prev_idx: Optional[int],
+    current_idx: int,
+    next_idx: int,
+    width: int,
+    turn_penalty: float,
+) -> float:
+    if prev_idx is None or turn_penalty <= 0.0:
+        return 0.0
+
+    prev_dx, prev_dy = _step_direction(prev_idx, current_idx, width)
+    next_dx, next_dy = _step_direction(current_idx, next_idx, width)
+    if prev_dx == next_dx and prev_dy == next_dy:
+        return 0.0
+
+    prev_norm = math.hypot(prev_dx, prev_dy)
+    next_norm = math.hypot(next_dx, next_dy)
+    if prev_norm == 0.0 or next_norm == 0.0:
+        return 0.0
+
+    cos_theta = (prev_dx * next_dx + prev_dy * next_dy) / (prev_norm * next_norm)
+    cos_theta = max(-1.0, min(1.0, cos_theta))
+    angle = math.acos(cos_theta)
+    return turn_penalty * (angle / math.pi)
+
+
 def dijkstra(
     start_index: int,
     goal_index: int,
@@ -44,6 +78,7 @@ def dijkstra(
     allow_unknown: bool = False,
     allow_diagonal: bool = True,
     cell_cost_weight: float = 2.0,
+    turn_penalty: float = 0.0,
     on_closed: NodeCallback = None,
     on_frontier: NodeCallback = None,
 ) -> Tuple[List[int], Set[int], Set[int]]:
@@ -78,11 +113,14 @@ def dijkstra(
             allow_diagonal=allow_diagonal,
             cell_cost_weight=cell_cost_weight,
         )
+        parent = parents.get(current)
         for neighbor, step_cost in neighbors:
             if neighbor in closed:
                 continue
 
-            tentative = current_cost + step_cost
+            tentative = current_cost + step_cost + _turn_penalty_cost(
+                parent, current, neighbor, width, turn_penalty
+            )
             if tentative >= g_costs.get(neighbor, float('inf')):
                 continue
 
@@ -109,6 +147,7 @@ def a_star(
     allow_unknown: bool = False,
     allow_diagonal: bool = True,
     cell_cost_weight: float = 2.0,
+    turn_penalty: float = 0.0,
     on_closed: NodeCallback = None,
     on_frontier: NodeCallback = None,
 ) -> Tuple[List[int], Set[int], Set[int]]:
@@ -144,11 +183,14 @@ def a_star(
             allow_diagonal=allow_diagonal,
             cell_cost_weight=cell_cost_weight,
         )
+        parent = parents.get(current)
         for neighbor, step_cost in neighbors:
             if neighbor in closed:
                 continue
 
-            tentative_g = current_g + step_cost
+            tentative_g = current_g + step_cost + _turn_penalty_cost(
+                parent, current, neighbor, width, turn_penalty
+            )
             if tentative_g >= g_costs.get(neighbor, float('inf')):
                 continue
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
-from typing import Optional, Sequence, Set
+from typing import Callable, List, Optional, Sequence, Set, Tuple
 
 import rclpy
 from builtin_interfaces.msg import Duration as DurationMsg
@@ -38,8 +38,15 @@ class CustomPlannerServer(Node):
         self.declare_parameter('allow_unknown', False)
         self.declare_parameter('allow_diagonal', True)
         self.declare_parameter('cell_cost_weight', 2.0)
+        self.declare_parameter('turn_penalty', 0.2)
         self.declare_parameter('nearest_free_max_radius', 8)
         self.declare_parameter('visualize_search', True)
+        self.declare_parameter('visualize_progressive', True)
+        self.declare_parameter('visualize_every_n_closed', 30)
+        self.declare_parameter('visualize_step_delay_ms', 60.0)
+        self.declare_parameter('simplify_path', True)
+        self.declare_parameter('line_of_sight_smoothing', True)
+        self.declare_parameter('smoothing_clearance_cells', 1)
 
         self.algorithm = str(self.get_parameter('algorithm').value).strip().lower()
         self.map_topic = str(self.get_parameter('map_topic').value)
@@ -49,8 +56,23 @@ class CustomPlannerServer(Node):
         self.allow_unknown = bool(self.get_parameter('allow_unknown').value)
         self.allow_diagonal = bool(self.get_parameter('allow_diagonal').value)
         self.cell_cost_weight = float(self.get_parameter('cell_cost_weight').value)
+        self.turn_penalty = float(self.get_parameter('turn_penalty').value)
         self.nearest_free_max_radius = int(self.get_parameter('nearest_free_max_radius').value)
         self.visualize_search = bool(self.get_parameter('visualize_search').value)
+        self.visualize_progressive = bool(
+            self.get_parameter('visualize_progressive').value
+        )
+        self.visualize_every_n_closed = max(
+            1, int(self.get_parameter('visualize_every_n_closed').value)
+        )
+        self.visualize_step_delay_ms = max(
+            0.0, float(self.get_parameter('visualize_step_delay_ms').value)
+        )
+        self.simplify_path = bool(self.get_parameter('simplify_path').value)
+        self.line_of_sight_smoothing = bool(self.get_parameter('line_of_sight_smoothing').value)
+        self.smoothing_clearance_cells = int(
+            self.get_parameter('smoothing_clearance_cells').value
+        )
 
         self.map_msg: Optional[OccupancyGrid] = None
         self.grid_viz: Optional[GridViz] = None
@@ -91,8 +113,14 @@ class CustomPlannerServer(Node):
         )
 
         self.get_logger().info(
-            'Custom planner ready (algorithm=%s, map_topic=%s)'
-            % (self.algorithm, self.map_topic)
+            'Custom planner ready (algorithm=%s, map_topic=%s, turn_penalty=%.2f, viz_step=%d, viz_delay_ms=%.0f)'
+            % (
+                self.algorithm,
+                self.map_topic,
+                self.turn_penalty,
+                self.visualize_every_n_closed,
+                self.visualize_step_delay_ms,
+            )
         )
 
     def _map_callback(self, msg: OccupancyGrid) -> None:
@@ -175,6 +203,7 @@ class CustomPlannerServer(Node):
             return result
 
         t0 = time.monotonic()
+        on_closed_cb, on_frontier_cb = self._make_live_viz_callbacks(start_idx, goal_idx)
         path_indices, closed, frontier = self._run_graph_search(
             algorithm,
             start_idx,
@@ -183,6 +212,8 @@ class CustomPlannerServer(Node):
             height,
             costmap,
             resolution,
+            on_closed=on_closed_cb,
+            on_frontier=on_frontier_cb,
         )
         dt = time.monotonic() - t0
 
@@ -192,6 +223,17 @@ class CustomPlannerServer(Node):
             result.path = self._empty_path()
             result.planning_time = self._duration_msg(dt)
             return result
+
+        raw_path_indices = list(path_indices)
+        raw_count = len(raw_path_indices)
+        if self.simplify_path:
+            path_indices = self._simplify_path_indices(raw_path_indices, width, height, costmap)
+            # Avoid over-compressing to a sparse segment list that local controller cannot track near turns/obstacles.
+            min_kept_points = max(3, raw_count // 5)
+            if len(path_indices) <= min_kept_points and raw_count >= 6:
+                path_indices = raw_path_indices
+            elif len(path_indices) < 2 and raw_count >= 2:
+                path_indices = raw_path_indices
 
         path_msg = self._indices_to_path(
             path_indices,
@@ -213,8 +255,15 @@ class CustomPlannerServer(Node):
             )
 
         self.get_logger().info(
-            '%s done: %d poses, explored=%d, frontier=%d, dt=%.3fs'
-            % (algorithm.upper(), len(path_msg.poses), len(closed), len(frontier), dt)
+            '%s done: raw=%d simplified=%d poses, explored=%d, frontier=%d, dt=%.3fs'
+            % (
+                algorithm.upper(),
+                raw_count,
+                len(path_msg.poses),
+                len(closed),
+                len(frontier),
+                dt,
+            )
         )
 
         result.path = path_msg
@@ -291,6 +340,7 @@ class CustomPlannerServer(Node):
                 result.planning_time = self._duration_msg(time.monotonic() - t0)
                 return result
 
+            on_closed_cb, on_frontier_cb = self._make_live_viz_callbacks(start_idx, goal_idx)
             segment_path, segment_closed, segment_frontier = self._run_graph_search(
                 algorithm,
                 start_idx,
@@ -299,6 +349,8 @@ class CustomPlannerServer(Node):
                 height,
                 costmap,
                 resolution,
+                on_closed=on_closed_cb,
+                on_frontier=on_frontier_cb,
             )
             if not segment_path:
                 self.get_logger().warn('No valid path found for one segment')
@@ -327,6 +379,18 @@ class CustomPlannerServer(Node):
             result.planning_time = self._duration_msg(dt)
             return result
 
+        raw_combined_indices = list(combined_indices)
+        raw_count = len(raw_combined_indices)
+        if self.simplify_path:
+            combined_indices = self._simplify_path_indices(
+                raw_combined_indices, width, height, costmap
+            )
+            min_kept_points = max(3, raw_count // 5)
+            if len(combined_indices) <= min_kept_points and raw_count >= 6:
+                combined_indices = raw_combined_indices
+            elif len(combined_indices) < 2 and raw_count >= 2:
+                combined_indices = raw_combined_indices
+
         path_msg = self._indices_to_path(
             combined_indices,
             width,
@@ -352,9 +416,10 @@ class CustomPlannerServer(Node):
             )
 
         self.get_logger().info(
-            '%s through-poses done: %d poses, explored=%d, frontier=%d, dt=%.3fs'
+            '%s through-poses done: raw=%d simplified=%d poses, explored=%d, frontier=%d, dt=%.3fs'
             % (
                 algorithm.upper(),
+                raw_count,
                 len(path_msg.poses),
                 len(closed_all),
                 len(frontier_all),
@@ -397,6 +462,8 @@ class CustomPlannerServer(Node):
         height: int,
         costmap: Sequence[int],
         resolution: float,
+        on_closed: Optional[Callable[[int], None]] = None,
+        on_frontier: Optional[Callable[[int], None]] = None,
     ):
         if algorithm == 'dijkstra':
             return dijkstra(
@@ -410,6 +477,9 @@ class CustomPlannerServer(Node):
                 allow_unknown=self.allow_unknown,
                 allow_diagonal=self.allow_diagonal,
                 cell_cost_weight=self.cell_cost_weight,
+                turn_penalty=self.turn_penalty,
+                on_closed=on_closed,
+                on_frontier=on_frontier,
             )
 
         return a_star(
@@ -423,7 +493,51 @@ class CustomPlannerServer(Node):
             allow_unknown=self.allow_unknown,
             allow_diagonal=self.allow_diagonal,
             cell_cost_weight=self.cell_cost_weight,
+            turn_penalty=self.turn_penalty,
+            on_closed=on_closed,
+            on_frontier=on_frontier,
         )
+
+    def _make_live_viz_callbacks(
+        self,
+        start_idx: int,
+        goal_idx: int,
+    ) -> Tuple[Optional[Callable[[int], None]], Optional[Callable[[int], None]]]:
+        if (
+            not self.visualize_search
+            or not self.visualize_progressive
+            or self.grid_viz is None
+        ):
+            return None, None
+
+        closed_live: Set[int] = set()
+        frontier_live: Set[int] = set()
+        every_n = max(1, self.visualize_every_n_closed)
+        delay_s = max(0.0, self.visualize_step_delay_ms / 1000.0)
+        counter = {'closed': 0}
+
+        def on_frontier(idx: int) -> None:
+            if idx in closed_live:
+                return
+            frontier_live.add(idx)
+
+        def on_closed(idx: int) -> None:
+            frontier_live.discard(idx)
+            closed_live.add(idx)
+            counter['closed'] += 1
+            if counter['closed'] % every_n != 0:
+                return
+            self.grid_viz.publish(
+                start_idx=start_idx,
+                goal_idx=goal_idx,
+                path_indices=[],
+                closed_indices=closed_live,
+                frontier_indices=frontier_live,
+            )
+            if delay_s > 0.0:
+                time.sleep(delay_s)
+
+        return on_closed, on_frontier
 
     def _pose_to_free_index(
         self,
@@ -436,6 +550,150 @@ class CustomPlannerServer(Node):
         if idx is None:
             return None
         return self._nearest_free(idx, width, height, costmap)
+
+    @staticmethod
+    def _index_to_cell(index: int, width: int) -> Tuple[int, int]:
+        return (index % width, index // width)
+
+    @staticmethod
+    def _sign(v: int) -> int:
+        if v > 0:
+            return 1
+        if v < 0:
+            return -1
+        return 0
+
+    def _remove_collinear_indices(
+        self, path_indices: Sequence[int], width: int
+    ) -> List[int]:
+        if len(path_indices) <= 2:
+            return list(path_indices)
+
+        result = [path_indices[0]]
+        prev = path_indices[0]
+        curr = path_indices[1]
+        px, py = self._index_to_cell(prev, width)
+        cx, cy = self._index_to_cell(curr, width)
+        prev_dx = self._sign(cx - px)
+        prev_dy = self._sign(cy - py)
+
+        for nxt in path_indices[2:]:
+            nx, ny = self._index_to_cell(nxt, width)
+            dx = self._sign(nx - cx)
+            dy = self._sign(ny - cy)
+            if dx == prev_dx and dy == prev_dy:
+                curr = nxt
+                cx, cy = nx, ny
+                continue
+            result.append(curr)
+            curr = nxt
+            cx, cy = nx, ny
+            prev_dx = dx
+            prev_dy = dy
+
+        result.append(curr)
+        return result
+
+    def _cell_is_free_with_clearance(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+        clearance: int,
+    ) -> bool:
+        for oy in range(-clearance, clearance + 1):
+            for ox in range(-clearance, clearance + 1):
+                cx = x + ox
+                cy = y + oy
+                if cx < 0 or cy < 0 or cx >= width or cy >= height:
+                    return False
+                cidx = cy * width + cx
+                if not self._is_free(cidx, costmap):
+                    return False
+        return True
+
+    def _line_of_sight_free(
+        self,
+        a_idx: int,
+        b_idx: int,
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+        clearance: int,
+    ) -> bool:
+        x0, y0 = self._index_to_cell(a_idx, width)
+        x1, y1 = self._index_to_cell(b_idx, width)
+
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+
+        x = x0
+        y = y0
+        while True:
+            if not self._cell_is_free_with_clearance(
+                x, y, width, height, costmap, clearance
+            ):
+                return False
+            if x == x1 and y == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+        return True
+
+    def _shortcut_path_indices(
+        self,
+        path_indices: Sequence[int],
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+    ) -> List[int]:
+        if len(path_indices) <= 2:
+            return list(path_indices)
+
+        out: List[int] = [path_indices[0]]
+        anchor = 0
+        last = len(path_indices) - 1
+        clearance = max(0, self.smoothing_clearance_cells)
+
+        while anchor < last:
+            chosen = anchor + 1
+            for candidate in range(last, anchor, -1):
+                if self._line_of_sight_free(
+                    path_indices[anchor],
+                    path_indices[candidate],
+                    width,
+                    height,
+                    costmap,
+                    clearance,
+                ):
+                    chosen = candidate
+                    break
+            out.append(path_indices[chosen])
+            anchor = chosen
+
+        return out
+
+    def _simplify_path_indices(
+        self,
+        path_indices: Sequence[int],
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+    ) -> List[int]:
+        simplified = self._remove_collinear_indices(path_indices, width)
+        if self.line_of_sight_smoothing:
+            simplified = self._shortcut_path_indices(simplified, width, height, costmap)
+        return simplified
 
     def _indices_to_path(
         self,

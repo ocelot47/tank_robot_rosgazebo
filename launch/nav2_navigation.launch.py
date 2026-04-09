@@ -15,7 +15,7 @@ def generate_launch_description():
     map_default = os.path.join(pkg_share, 'maps', 'my_map.yaml')
     # Doi bien nay de chon thuat toan mac dinh:
     # 'astar' hoac 'dijkstra'
-    thuat_toan_mac_dinh = 'astar'
+    thuat_toan_mac_dinh = 'dijkstra'
     nav2_params_default = os.path.join(pkg_share, 'config', 'nav2_params.yaml')
     rviz_default = os.path.join(pkg_share, 'config', 'nav2_robot_view.rviz')
     spawn_x = LaunchConfiguration('spawn_x')

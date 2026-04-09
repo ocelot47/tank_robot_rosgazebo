@@ -1,0 +1,14 @@
+<!--
+  Custom NavigateToPose BT (strict one-shot):
+  - ComputePathToPose is executed one time per goal.
+  - FollowPath tracks exactly that path.
+  - No recovery replanning loop.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="PlanOnceThenFollow">
+      <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+      <FollowPath path="{path}" controller_id="FollowPath"/>
+    </Sequence>
+  </BehaviorTree>
+</root>
