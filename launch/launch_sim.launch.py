@@ -4,7 +4,13 @@ from ament_index_python.packages import get_package_share_directory
 
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+    TimerAction,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -29,8 +35,14 @@ def generate_launch_description():
     # !!! MAKE SURE YOU SET THE PACKAGE NAME CORRECTLY !!!
 
     package_name='four_wheeled_robot' #<--- CHANGE ME
-    default_world_path = os.path.join(
-        get_package_share_directory(package_name), 'worlds', 'training_map.world'
+    package_share_dir = get_package_share_directory(package_name)
+    package_share_parent = os.path.dirname(package_share_dir)
+    default_world_path = os.path.join(package_share_dir, 'worlds', 'training_map.world')
+
+    # URDF package:// URIs are converted to model://<package>/... by Gazebo.
+    # Gazebo must know where to find the package folder.
+    gazebo_model_path = os.pathsep.join(
+        p for p in [package_share_parent, os.environ.get('GAZEBO_MODEL_PATH', '')] if p
     )
 
     rsp = IncludeLaunchDescription(
@@ -50,7 +62,18 @@ def generate_launch_description():
                 }.items()
              )
 
-    # Run the spawner node from the gazebo_ros package. The entity name doesn't really matter if you only have a single robot.
+    # Try removing a stale entity from a previous run to avoid spawn collisions.
+    delete_stale_entity = ExecuteProcess(
+        cmd=[
+            'ros2', 'service', 'call',
+            '/delete_entity',
+            'gazebo_msgs/srv/DeleteEntity',
+            "{name: 'my_bot'}",
+        ],
+        output='screen',
+    )
+
+    # Run the spawner node from the gazebo_ros package.
     spawn_entity = Node(package='gazebo_ros', executable='spawn_entity.py',
                         arguments=['-topic', 'robot_description',
                                    '-x', spawn_x,
@@ -106,7 +129,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'spawn_z',
-            default_value='0.20',
+            default_value='0.35',
             description='Initial z pose of robot.',
         ),
         DeclareLaunchArgument(
@@ -119,6 +142,10 @@ def generate_launch_description():
             value=model_database_uri,
         ),
         SetEnvironmentVariable(
+            name='GAZEBO_MODEL_PATH',
+            value=gazebo_model_path,
+        ),
+        SetEnvironmentVariable(
             name='QT_QPA_PLATFORM',
             value=qt_qpa_platform,
         ),
@@ -128,5 +155,6 @@ def generate_launch_description():
         ),
         rsp,
         gazebo,
-        spawn_entity,
+        TimerAction(period=2.0, actions=[delete_stale_entity]),
+        TimerAction(period=3.0, actions=[spawn_entity]),
     ])

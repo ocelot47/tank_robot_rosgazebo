@@ -5,50 +5,56 @@ from __future__ import annotations
 import heapq
 import itertools
 import math
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from custom_neighbors import find_neighbors
 
 NodeCallback = Optional[Callable[[int], None]]
+_SQRT2 = math.sqrt(2.0)
 
 
-def _euclidean_distance(idx: int, goal_idx: int, width: int, resolution: float) -> float:
-    ix = idx % width
-    iy = idx // width
-    gx = goal_idx % width
-    gy = goal_idx // width
-    return math.hypot(ix - gx, iy - gy) * resolution
+def _normalize_heuristic_mode(mode: str, allow_diagonal: bool) -> str:
+    selected_mode = mode.strip().lower() if mode else 'auto'
+    if selected_mode == 'auto':
+        return 'octile' if allow_diagonal else 'manhattan'
+    if selected_mode in ('manhattan', 'octile', 'euclidean'):
+        return selected_mode
+    return 'euclidean'
 
 
-def _heuristic_distance(
-    idx: int,
+def _build_heuristic(
     goal_idx: int,
     width: int,
     resolution: float,
-    allow_diagonal: bool,
     mode: str,
-) -> float:
-    ix = idx % width
-    iy = idx // width
+) -> Callable[[int], float]:
     gx = goal_idx % width
     gy = goal_idx // width
-    dx = abs(ix - gx)
-    dy = abs(iy - gy)
+    if mode == 'manhattan':
+        def manhattan(idx: int) -> float:
+            ix = idx % width
+            iy = idx // width
+            return (abs(ix - gx) + abs(iy - gy)) * resolution
+        return manhattan
 
-    selected_mode = mode.strip().lower() if mode else 'auto'
-    if selected_mode == 'auto':
-        selected_mode = 'octile' if allow_diagonal else 'manhattan'
-
-    if selected_mode == 'manhattan':
-        return (dx + dy) * resolution
-    if selected_mode == 'octile':
+    if mode == 'octile':
         d = resolution
-        d2 = resolution * math.sqrt(2.0)
-        return d * (dx + dy) + (d2 - 2.0 * d) * min(dx, dy)
-    if selected_mode == 'euclidean':
-        return math.hypot(dx, dy) * resolution
+        octile_cross_term = (resolution * _SQRT2) - (2.0 * d)
 
-    return math.hypot(dx, dy) * resolution
+        def octile(idx: int) -> float:
+            ix = idx % width
+            iy = idx // width
+            dx = abs(ix - gx)
+            dy = abs(iy - gy)
+            return d * (dx + dy) + octile_cross_term * min(dx, dy)
+        return octile
+
+    def euclidean(idx: int) -> float:
+        ix = idx % width
+        iy = idx // width
+        return math.hypot(ix - gx, iy - gy) * resolution
+
+    return euclidean
 
 
 def _reconstruct_path(
@@ -116,14 +122,18 @@ def dijkstra(
 ) -> Tuple[List[int], Set[int], Set[int]]:
     """Compute shortest path using Dijkstra."""
     push_order = itertools.count()
-    open_heap: List[Tuple[float, int, int]] = [(0.0, next(push_order), start_index)]
+    next_push = push_order.__next__
+    open_heap: List[Tuple[float, int, int]] = [(0.0, next_push(), start_index)]
     g_costs: Dict[int, float] = {start_index: 0.0}
     parents: Dict[int, int] = {}
     closed: Set[int] = set()
     frontier: Set[int] = {start_index}
+    inf = float('inf')
+    push_heap = heapq.heappush
+    pop_heap = heapq.heappop
 
     while open_heap:
-        current_cost, _, current = heapq.heappop(open_heap)
+        current_cost, _, current = pop_heap(open_heap)
         if current in closed:
             continue
 
@@ -154,12 +164,12 @@ def dijkstra(
             tentative = current_cost + step_cost + _turn_penalty_cost(
                 parent, current, neighbor, width, turn_penalty
             )
-            if tentative >= g_costs.get(neighbor, float('inf')):
+            if tentative >= g_costs.get(neighbor, inf):
                 continue
 
             parents[neighbor] = current
             g_costs[neighbor] = tentative
-            heapq.heappush(open_heap, (tentative, next(push_order), neighbor))
+            push_heap(open_heap, (tentative, next_push(), neighbor))
 
             if neighbor not in frontier:
                 frontier.add(neighbor)
@@ -188,25 +198,29 @@ def a_star(
 ) -> Tuple[List[int], Set[int], Set[int]]:
     """Compute shortest path using A* with configurable heuristic."""
     push_order = itertools.count()
+    next_push = push_order.__next__
+    push_heap = heapq.heappush
+    pop_heap = heapq.heappop
     w = max(0.0, float(heuristic_weight))
-    start_h = _heuristic_distance(
-        start_index,
+    resolved_mode = _normalize_heuristic_mode(heuristic_mode, allow_diagonal)
+    heuristic = _build_heuristic(
         goal_index,
         width,
         resolution,
-        allow_diagonal,
-        heuristic_mode,
+        resolved_mode,
     )
+    start_h = heuristic(start_index)
     open_heap: List[Tuple[float, float, int, int]] = [
-        (w * start_h, start_h, next(push_order), start_index)
+        (w * start_h, start_h, next_push(), start_index)
     ]
     g_costs: Dict[int, float] = {start_index: 0.0}
     parents: Dict[int, int] = {}
     closed: Set[int] = set()
     frontier: Set[int] = {start_index}
+    inf = float('inf')
 
     while open_heap:
-        _, _, _, current = heapq.heappop(open_heap)
+        _, _, _, current = pop_heap(open_heap)
         if current in closed:
             continue
         current_g = g_costs[current]
@@ -238,22 +252,15 @@ def a_star(
             tentative_g = current_g + step_cost + _turn_penalty_cost(
                 parent, current, neighbor, width, turn_penalty
             )
-            if tentative_g >= g_costs.get(neighbor, float('inf')):
+            if tentative_g >= g_costs.get(neighbor, inf):
                 continue
 
             parents[neighbor] = current
             g_costs[neighbor] = tentative_g
-            h = _heuristic_distance(
-                neighbor,
-                goal_index,
-                width,
-                resolution,
-                allow_diagonal,
-                heuristic_mode,
-            )
-            heapq.heappush(
+            h = heuristic(neighbor)
+            push_heap(
                 open_heap,
-                (tentative_g + w * h, h, next(push_order), neighbor),
+                (tentative_g + w * h, h, next_push(), neighbor),
             )
 
             if neighbor not in frontier:

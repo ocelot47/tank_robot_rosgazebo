@@ -10,6 +10,65 @@ Phiên bản hiện tại có:
 - Nav2 + RViz để chọn goal và tự chạy né vật cản.
 - Global planner custom: chọn `astar` hoặc `dijkstra`.
 
+## 0) Chạy nhanh (copy-paste)
+
+### 0.1. Build + source đúng workspace
+
+```bash
+cd ~/tank_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select four_wheeled_robot --symlink-install
+source ~/tank_ws/install/setup.bash
+```
+
+Lưu ý: luôn build ở `~/tank_ws`, không build trong `~/tank_ws/src/four_wheeled_robot`.
+
+### 0.2. Chạy mô phỏng cơ bản
+
+```bash
+cd ~/tank_ws
+source /opt/ros/humble/setup.bash
+source ~/tank_ws/install/setup.bash
+ros2 launch four_wheeled_robot launch_sim.launch.py
+```
+
+### 0.3. Chạy SLAM để quét map mới
+
+Terminal 1:
+
+```bash
+cd ~/tank_ws
+source /opt/ros/humble/setup.bash
+source ~/tank_ws/install/setup.bash
+ros2 launch four_wheeled_robot slam_mapping.launch.py
+```
+
+Terminal 2:
+
+```bash
+cd ~/tank_ws
+source /opt/ros/humble/setup.bash
+source ~/tank_ws/install/setup.bash
+ros2 run four_wheeled_robot wasd_teleop
+```
+
+Lưu map:
+
+```bash
+ros2 run nav2_map_server map_saver_cli -f ~/tank_ws/src/four_wheeled_robot/maps/my_map
+```
+
+### 0.4. Chạy Nav2
+
+```bash
+cd ~/tank_ws
+source /opt/ros/humble/setup.bash
+source ~/tank_ws/install/setup.bash
+ros2 launch four_wheeled_robot nav2_navigation.launch.py \
+  map:=/home/$USER/tank_ws/src/four_wheeled_robot/maps/my_map.yaml \
+  planner_algorithm:=astar
+```
+
 ## 1) Yêu cầu hệ thống
 
 - Ubuntu 22.04
@@ -301,11 +360,9 @@ ros2 topic echo /tf --once
 ```
 
 ## 12) Build nhanh sau khi sửa code
-tắt hết tiến trình cũ
-pkill -9 -f 'ros2|gzserver|gzclient|rviz2|robot_state_publisher|spawn_entity.py' || true
-
 
 ```bash
+pkill -9 -f 'ros2|gzserver|gzclient|rviz2|robot_state_publisher|spawn_entity.py' || true
 cd ~/tank_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select four_wheeled_robot --symlink-install

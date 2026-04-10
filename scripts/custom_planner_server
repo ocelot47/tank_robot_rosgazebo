@@ -83,6 +83,7 @@ class CustomPlannerServer(Node):
         )
 
         self.map_msg: Optional[OccupancyGrid] = None
+        self._cached_map_context = None
         self.grid_viz: Optional[GridViz] = None
 
         self.path_pub = self.create_publisher(Path, '/plan', 10)
@@ -135,18 +136,28 @@ class CustomPlannerServer(Node):
 
     def _map_callback(self, msg: OccupancyGrid) -> None:
         self.map_msg = msg
+        info = msg.info
+        self._cached_map_context = (
+            int(info.width),
+            int(info.height),
+            float(info.resolution),
+            float(info.origin.position.x),
+            float(info.origin.position.y),
+            msg.data,
+        )
+
         if self.grid_viz is None:
             self.grid_viz = GridViz(
                 node=self,
                 frame_id=self.global_frame,
-                resolution=float(msg.info.resolution),
-                origin_x=float(msg.info.origin.position.x),
-                origin_y=float(msg.info.origin.position.y),
-                width=int(msg.info.width),
+                resolution=float(info.resolution),
+                origin_x=float(info.origin.position.x),
+                origin_y=float(info.origin.position.y),
+                width=int(info.width),
             )
             self.get_logger().info(
                 'Received map %dx%d @ %.3fm'
-                % (msg.info.width, msg.info.height, msg.info.resolution)
+                % (info.width, info.height, info.resolution)
             )
 
     def _goal_callback(self, goal_request) -> GoalResponse:
@@ -234,16 +245,12 @@ class CustomPlannerServer(Node):
             result.planning_time = self._duration_msg(dt)
             return result
 
-        raw_path_indices = list(path_indices)
-        raw_count = len(raw_path_indices)
-        if self.simplify_path:
-            path_indices = self._simplify_path_indices(raw_path_indices, width, height, costmap)
-            # Avoid over-compressing to a sparse segment list that local controller cannot track near turns/obstacles.
-            min_kept_points = max(3, raw_count // 5)
-            if len(path_indices) <= min_kept_points and raw_count >= 6:
-                path_indices = raw_path_indices
-            elif len(path_indices) < 2 and raw_count >= 2:
-                path_indices = raw_path_indices
+        path_indices, raw_count = self._post_process_path_indices(
+            path_indices,
+            width,
+            height,
+            costmap,
+        )
 
         path_msg = self._indices_to_path(
             path_indices,
@@ -389,17 +396,12 @@ class CustomPlannerServer(Node):
             result.planning_time = self._duration_msg(dt)
             return result
 
-        raw_combined_indices = list(combined_indices)
-        raw_count = len(raw_combined_indices)
-        if self.simplify_path:
-            combined_indices = self._simplify_path_indices(
-                raw_combined_indices, width, height, costmap
-            )
-            min_kept_points = max(3, raw_count // 5)
-            if len(combined_indices) <= min_kept_points and raw_count >= 6:
-                combined_indices = raw_combined_indices
-            elif len(combined_indices) < 2 and raw_count >= 2:
-                combined_indices = raw_combined_indices
+        combined_indices, raw_count = self._post_process_path_indices(
+            combined_indices,
+            width,
+            height,
+            costmap,
+        )
 
         path_msg = self._indices_to_path(
             combined_indices,
@@ -451,17 +453,7 @@ class CustomPlannerServer(Node):
         return self._get_robot_pose_in_map()
 
     def _map_context_snapshot(self):
-        if self.map_msg is None:
-            return None
-        map_info = self.map_msg.info
-        return (
-            int(map_info.width),
-            int(map_info.height),
-            float(map_info.resolution),
-            float(map_info.origin.position.x),
-            float(map_info.origin.position.y),
-            list(self.map_msg.data),
-        )
+        return self._cached_map_context
 
     def _run_graph_search(
         self,
@@ -706,6 +698,34 @@ class CustomPlannerServer(Node):
         if self.line_of_sight_smoothing:
             simplified = self._shortcut_path_indices(simplified, width, height, costmap)
         return simplified
+
+    def _post_process_path_indices(
+        self,
+        path_indices: Sequence[int],
+        width: int,
+        height: int,
+        costmap: Sequence[int],
+    ) -> Tuple[List[int], int]:
+        raw_path_indices = list(path_indices)
+        raw_count = len(raw_path_indices)
+        if not self.simplify_path:
+            return raw_path_indices, raw_count
+
+        simplified = self._simplify_path_indices(
+            raw_path_indices,
+            width,
+            height,
+            costmap,
+        )
+
+        # Avoid over-compressing to a sparse segment list that local controller
+        # cannot track near turns/obstacles.
+        min_kept_points = max(3, raw_count // 5)
+        if len(simplified) <= min_kept_points and raw_count >= 6:
+            return raw_path_indices, raw_count
+        if len(simplified) < 2 and raw_count >= 2:
+            return raw_path_indices, raw_count
+        return simplified, raw_count
 
     def _indices_to_path(
         self,
