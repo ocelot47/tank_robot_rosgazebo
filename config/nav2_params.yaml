@@ -37,7 +37,7 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    scan_topic: /scan
+    scan_topic: /four_wheeled_robot/scan
 
 bt_navigator:
   ros__parameters:
@@ -221,7 +221,7 @@ local_costmap:
         max_obstacle_height: 2.0
         observation_sources: scan
         scan:
-          topic: /scan
+          topic: /four_wheeled_robot/scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -250,7 +250,7 @@ global_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan
+          topic: /four_wheeled_robot/scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True

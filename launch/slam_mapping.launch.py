@@ -28,6 +28,7 @@ def generate_launch_description():
             'spawn_x': LaunchConfiguration('spawn_x'),
             'spawn_y': LaunchConfiguration('spawn_y'),
             'spawn_z': LaunchConfiguration('spawn_z'),
+            'spawn_yaw': LaunchConfiguration('spawn_yaw'),
         }.items(),
     )
 
@@ -59,13 +60,15 @@ def generate_launch_description():
         [
             DeclareLaunchArgument('gui', default_value='true'),
             DeclareLaunchArgument('server', default_value='true'),
+            # đổi world 
             DeclareLaunchArgument(
                 'world',
-                default_value=os.path.join(pkg_share, 'worlds', 'training_map.world'),
+                default_value=os.path.join(pkg_share, 'worlds', 'warehouse_RIO_1.world'),
             ),
             DeclareLaunchArgument('spawn_x', default_value='0.0'),
-            DeclareLaunchArgument('spawn_y', default_value='0.0'),
-            DeclareLaunchArgument('spawn_z', default_value='0.20'),
+            DeclareLaunchArgument('spawn_y', default_value='3.5'),
+            DeclareLaunchArgument('spawn_z', default_value='0.35'),
+            DeclareLaunchArgument('spawn_yaw', default_value='0.0'),
             DeclareLaunchArgument(
                 'slam_params_file',
                 default_value=slam_params_default,

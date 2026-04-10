@@ -3,16 +3,32 @@
 	
 	<xacro:include filename="inertial_macros.xacro"/>	
 
-	<material name="white">
-		<color rgba="1 1 1 1"/>
+	<material name="chassis_metal">
+		<color rgba="0.18 0.22 0.27 1"/>
 	</material>
 
-	<material name="black">
-		<color rgba="0 0 0 1"/>
+	<material name="chassis_rubber">
+		<color rgba="0.03 0.03 0.04 1"/>
 	</material>
 
-	<material name="yellow">
-		<color rgba="1 1 0 1"/>
+	<material name="chassis_panel">
+		<color rgba="0.98 0.45 0.08 1"/>
+	</material>
+
+	<material name="chassis_clear">
+		<color rgba="0.55 0.75 0.95 0.45"/>
+	</material>
+
+	<material name="wheel_hub">
+		<color rgba="0.95 0.70 0.15 1"/>
+	</material>
+
+	<material name="wheel_tire">
+		<color rgba="0.02 0.02 0.02 1"/>
+	</material>
+
+	<material name="lidar_accent">
+		<color rgba="0.10 0.85 0.75 1"/>
 	</material>
 
 	<!-- DAE meshes keep the original visual look -->
@@ -58,28 +74,28 @@
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/BaseMetal.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="white"/>
+			<material name="chassis_metal"/>
 		</visual>
 		<visual>
 			<origin xyz="0 0 0" rpy="0 0 0"/>
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/BaseRubber.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="black"/>
+			<material name="chassis_rubber"/>
 		</visual>
 		<visual>
 			<origin xyz="0 0 0" rpy="0 0 0"/>
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/BasePlastic.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="yellow"/>
+			<material name="chassis_panel"/>
 		</visual>
 			<visual>
 				<origin xyz="0 0 0" rpy="0 0 0"/>
 				<geometry>
 						<mesh filename="package://four_wheeled_robot/meshes/BaseClear.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 				</geometry>
-				<material name="white"/>
+				<material name="chassis_clear"/>
 			</visual>
 		<collision>
 			<origin xyz="0 0 0.0875"/>
@@ -106,7 +122,7 @@
 			<geometry>
 				<cylinder radius="0.03" length="0.04"/>
 			</geometry>
-			<material name="black"/>
+			<material name="lidar_accent"/>
 		</visual>
 		<collision>
 			<origin xyz="0 0 0" rpy="0 0 0"/>
@@ -145,12 +161,12 @@
 					<stddev>0.01</stddev>
 				</noise>
 			</ray>
-			<plugin name="gazebo_ros_lidar" filename="libgazebo_ros_ray_sensor.so">
-				<ros>
-					<remapping>~/out:=scan</remapping>
-				</ros>
-				<output_type>sensor_msgs/LaserScan</output_type>
-				<frame_name>lidar_link</frame_name>
+				<plugin name="gazebo_ros_lidar" filename="libgazebo_ros_ray_sensor.so">
+					<ros>
+						<remapping>~/out:=/four_wheeled_robot/scan</remapping>
+					</ros>
+					<output_type>sensor_msgs/LaserScan</output_type>
+					<frame_name>lidar_link</frame_name>
 			</plugin>
 		</sensor>
 	</gazebo>
@@ -159,8 +175,8 @@
 	<joint name="wheel1_joint" type="continuous">
 		<parent link="base_link"/>
 		<child link="wheel1_link"/>
-		<origin xyz="0.2 0.25 0" rpy="${-pi/2} 0 0"/>
-		<axis xyz="0 0 1"/>
+		<origin xyz="0.2 0.25 0" rpy="0 0 0"/>
+		<axis xyz="0 1 0"/>
 		<limit effort="80" velocity="20" />
 	    <dynamics damping="1.0" friction="1.0" />
 	</joint>
@@ -171,32 +187,33 @@
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/HubMotor.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="yellow"/>
+			<material name="wheel_hub"/>
 		</visual>
 			<visual>
 				<origin xyz="0 0 0" rpy="0 0 ${pi}"/>
 				<geometry>
 						<mesh filename="package://four_wheeled_robot/meshes/RubberWheel.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 				</geometry>
-				<material name="black"/>
+				<material name="wheel_tire"/>
 			</visual>
 		<collision>
+			<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
 		</collision>
 		
 		<xacro:inertial_cylinder mass="0.1" length="0.1" radius="0.1">
-        	<origin xyz="0 0 0" rpy="0 0 0"/>
-        </xacro:inertial_cylinder>
+	        	<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+	        </xacro:inertial_cylinder>
 	</link>
 	
 	<!-- WHEEL2 -->
 	<joint name="wheel2_joint" type="continuous">
 		<parent link="base_link"/>
 		<child link="wheel2_link"/>
-		<origin xyz="0.2 -0.25 0" rpy="${pi/2} 0 0"/>
-		<axis xyz="0 0 -1"/>
+		<origin xyz="0.2 -0.25 0" rpy="0 0 0"/>
+		<axis xyz="0 1 0"/>
 		<limit effort="80" velocity="20" />
 	    <dynamics damping="1.0" friction="1.0" />
 	</joint>
@@ -207,32 +224,33 @@
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/HubMotor.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="yellow"/>
+			<material name="wheel_hub"/>
 		</visual>
 			<visual>
 				<origin xyz="0 0 0" rpy="0 0 0"/>
 				<geometry>
 						<mesh filename="package://four_wheeled_robot/meshes/RubberWheel.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 				</geometry>
-				<material name="black"/>
+				<material name="wheel_tire"/>
 			</visual>
 		<collision>
+			<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
 		</collision>
 
 		<xacro:inertial_cylinder mass="0.1" length="0.1" radius="0.1">
-        	<origin xyz="0 0 0" rpy="0 0 0"/>
-        </xacro:inertial_cylinder>
+	        	<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+	        </xacro:inertial_cylinder>
 	</link>
 	
 	<!-- WHEEL3 -->
 	<joint name="wheel3_joint" type="continuous">
 		<parent link="base_link"/>
 		<child link="wheel3_link"/>
-		<origin xyz="-0.2 0.25 0" rpy="${-pi/2} 0 0"/>
-		<axis xyz="0 0 1"/>
+		<origin xyz="-0.2 0.25 0" rpy="0 0 0"/>
+		<axis xyz="0 1 0"/>
 		<limit effort="80" velocity="20" />
 	    <dynamics damping="1.0" friction="1.0" />
 	</joint>
@@ -243,32 +261,33 @@
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/HubMotor.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="yellow"/>
+			<material name="wheel_hub"/>
 		</visual>
 			<visual>
 				<origin xyz="0 0 0" rpy="0 0 ${pi}"/>
 				<geometry>
 						<mesh filename="package://four_wheeled_robot/meshes/RubberWheel.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 				</geometry>
-				<material name="black"/>
+				<material name="wheel_tire"/>
 			</visual>
 		<collision>
+			<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
 		</collision>
 
 		<xacro:inertial_cylinder mass="0.1" length="0.1" radius="0.1">
-        	<origin xyz="0 0 0" rpy="0 0 0"/>
-        </xacro:inertial_cylinder>
+	        	<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+	        </xacro:inertial_cylinder>
 	</link>
 
 	<!-- WHEEL4 -->
 	<joint name="wheel4_joint" type="continuous">
 		<parent link="base_link"/>
 		<child link="wheel4_link"/>
-		<origin xyz="-0.2 -0.25 0" rpy="${pi/2} 0 0"/>
-		<axis xyz="0 0 -1"/>
+		<origin xyz="-0.2 -0.25 0" rpy="0 0 0"/>
+		<axis xyz="0 1 0"/>
 		<limit effort="80" velocity="20" />
 	    <dynamics damping="1.0" friction="1.0" />
 	</joint>
@@ -279,23 +298,24 @@
 			<geometry>
 					<mesh filename="package://four_wheeled_robot/meshes/HubMotor.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 			</geometry>
-			<material name="yellow"/>
+			<material name="wheel_hub"/>
 		</visual>
 			<visual>
 				<origin xyz="0 0 0" rpy="0 0 0"/>
 				<geometry>
 						<mesh filename="package://four_wheeled_robot/meshes/RubberWheel.dae" scale="${elm_scale} ${elm_scale} ${elm_scale}"/>
 				</geometry>
-				<material name="black"/>
+				<material name="wheel_tire"/>
 			</visual>
 		<collision>
+			<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
 			<geometry>
 				<cylinder radius="0.1" length="0.1"/>
 			</geometry>
 		</collision>
 
 		<xacro:inertial_cylinder mass="0.1" length="0.1" radius="0.1">
-        	<origin xyz="0 0 0" rpy="0 0 0"/>
+	        	<origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
 	        </xacro:inertial_cylinder>
 		</link>
 

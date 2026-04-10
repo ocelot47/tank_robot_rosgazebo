@@ -106,13 +106,14 @@ def generate_launch_description():
         [
             DeclareLaunchArgument('gui', default_value='true'),
             DeclareLaunchArgument('server', default_value='true'),
+            # doi world
             DeclareLaunchArgument(
                 'world',
-                default_value=os.path.join(pkg_share, 'worlds', 'training_map.world'),
+                default_value=os.path.join(pkg_share, 'worlds', 'warehouse_RIO_1.world'),
             ),
             DeclareLaunchArgument('spawn_x', default_value='0.0'),
-            DeclareLaunchArgument('spawn_y', default_value='0.0'),
-            DeclareLaunchArgument('spawn_z', default_value='0.20'),
+            DeclareLaunchArgument('spawn_y', default_value='3.5'),
+            DeclareLaunchArgument('spawn_z', default_value='0.35'),
             DeclareLaunchArgument('spawn_yaw', default_value='0.0'),
             DeclareLaunchArgument('map', default_value=map_default),
             DeclareLaunchArgument('nav2_params_file', default_value=nav2_params_default),

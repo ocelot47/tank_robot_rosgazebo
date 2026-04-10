@@ -16,10 +16,10 @@
         <technique sid="common">
           <lambert>
             <emission>
-              <color sid="emission">0 0 0 1</color>
+              <color sid="emission">0.035 0.024 0.006 1</color>
             </emission>
             <diffuse>
-              <color sid="diffuse">0.005604543 0.005604543 0.005604543 1</color>
+              <color sid="diffuse">0.95 0.70 0.14 1</color>
             </diffuse>
             <reflectivity>
               <float sid="specular">1</float>

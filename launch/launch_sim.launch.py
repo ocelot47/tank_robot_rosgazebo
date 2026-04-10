@@ -37,7 +37,8 @@ def generate_launch_description():
     package_name='four_wheeled_robot' #<--- CHANGE ME
     package_share_dir = get_package_share_directory(package_name)
     package_share_parent = os.path.dirname(package_share_dir)
-    default_world_path = os.path.join(package_share_dir, 'worlds', 'training_map.world')
+    # doi world 
+    default_world_path = os.path.join(package_share_dir, 'worlds', 'warehouse_RIO_1.world')
 
     # URDF package:// URIs are converted to model://<package>/... by Gazebo.
     # Gazebo must know where to find the package folder.
@@ -75,7 +76,7 @@ def generate_launch_description():
 
     # Run the spawner node from the gazebo_ros package.
     spawn_entity = Node(package='gazebo_ros', executable='spawn_entity.py',
-                        arguments=['-topic', 'robot_description',
+                        arguments=['-topic', '/four_wheeled_robot/robot_description',
                                    '-x', spawn_x,
                                    '-y', spawn_y,
                                    '-z', spawn_z,
@@ -124,7 +125,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'spawn_y',
-            default_value='0.0',
+            default_value='3.5',
             description='Initial y pose of robot.',
         ),
         DeclareLaunchArgument(
